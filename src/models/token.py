@@ -1,13 +1,14 @@
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, DateTime, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID
-from src.database import Base
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
 
 class OAuthToken(Base):
     __tablename__ = "oauth_tokens"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     provider = Column(String, default="google", nullable=False)
     access_token = Column(Text, nullable=False)
     refresh_token = Column(Text, nullable=True)

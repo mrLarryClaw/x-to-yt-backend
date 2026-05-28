@@ -5,8 +5,7 @@ python-jose[cryptography]
 itsdangerous
 python-dotenv
 sqlalchemy
-asyncpg
-psycopg2-binary
+aiosqlite
 pydantic
 pydantic-settings
 cryptography

@@ -2,8 +2,9 @@ import uuid
 import enum
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Enum
-from sqlalchemy.dialects.postgresql import UUID
-from src.database import Base
+from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Enum
+from sqlalchemy.orm import declarative_base
+import uuid
 
 class JobStatus(str, enum.Enum):
     queued = "queued"
@@ -14,8 +15,8 @@ class JobStatus(str, enum.Enum):
 
 class Job(Base):
     __tablename__ = "jobs"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     source_url = Column(String, nullable=False)
     canonical_url = Column(String, nullable=False)
     status = Column(Enum(JobStatus), default=JobStatus.queued, nullable=False)

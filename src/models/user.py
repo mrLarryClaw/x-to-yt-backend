@@ -1,12 +1,13 @@
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, DateTime, Boolean
-from sqlalchemy.dialects.postgresql import UUID
-from src.database import Base
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     google_sub = Column(String, unique=True, nullable=False)
     email = Column(String, unique=True, nullable=False)
     display_name = Column(String, nullable=False)

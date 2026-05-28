@@ -1,0 +1,6 @@
+[build]
+buildCommand = "pip install -r requirements"
+
+[deploy]
+startCommand = "bash start.sh"
+healthCheckPath = "/"

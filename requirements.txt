@@ -1,11 +1,7 @@
 fastapi
 uvicorn[standard]
 python-multipart
-python-jose[cryptography]
-itsdangerous
 python-dotenv
-sqlalchemy
-aiosqlite
 pydantic
 pydantic-settings
 cryptography
@@ -13,7 +9,6 @@ google-auth
 google-auth-oauthlib
 google-api-python-client
 aiohttp
-requests
 httpx
 apscheduler
 yt-dlp

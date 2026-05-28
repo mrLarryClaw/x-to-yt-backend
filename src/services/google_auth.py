@@ -96,16 +96,20 @@ def refresh_access_token(refresh_token: str) -> dict:
     }
 
 
-async def refresh_if_needed(db, token_record):
-    if token_record.expiry and token_record.expiry < datetime.now(timezone.utc) + timedelta(seconds=60):
-        if token_record.refresh_token:
-            decrypted_refresh = crypto_service.decrypt(token_record.refresh_token)
-            loop = asyncio.get_running_loop()
-            refreshed = await loop.run_in_executor(None, refresh_access_token, decrypted_refresh)
-            token_record.access_token = crypto_service.encrypt(refreshed["access_token"])
-            token_record.expiry = refreshed["expiry"]
-            if refreshed.get("refresh_token"):
-                token_record.refresh_token = crypto_service.encrypt(refreshed["refresh_token"])
-            await db.commit()
-            return refreshed["access_token"]
-    return crypto_service.decrypt(token_record.access_token)
+async def refresh_if_needed(token) -> str:
+    """token is an OAuthToken dataclass from database.py"""
+    expiry = token.expiry
+    needs_refresh = (
+        expiry is None or
+        expiry < datetime.now(timezone.utc) + timedelta(seconds=60)
+    )
+    if needs_refresh and token.refresh_token:
+        decrypted_refresh = crypto_service.decrypt(token.refresh_token)
+        loop = asyncio.get_running_loop()
+        refreshed = await loop.run_in_executor(None, refresh_access_token, decrypted_refresh)
+        token.access_token = crypto_service.encrypt(refreshed["access_token"])
+        token.expiry = refreshed["expiry"]
+        if refreshed.get("refresh_token"):
+            token.refresh_token = crypto_service.encrypt(refreshed["refresh_token"])
+        return refreshed["access_token"]
+    return crypto_service.decrypt(token.access_token)

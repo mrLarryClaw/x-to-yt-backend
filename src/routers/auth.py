@@ -1,14 +1,10 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, HTTPException, status, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-from src.database import get_db
-from src.models import User, OAuthToken
-from src.schemas import UserOut
+from src.database import db, User, OAuthToken
 from src.services.google_auth import (
     create_authorization_url,
     exchange_code,
@@ -36,7 +32,7 @@ async def auth_start(request: Request):
 
 
 @router.get("/google/callback")
-async def auth_callback(request: Request, code: str, state: str, db: AsyncSession = Depends(get_db)):
+async def auth_callback(request: Request, code: str, state: str):
     cookie_state = request.cookies.get("auth_state")
     if not cookie_state or cookie_state != state:
         return RedirectResponse(url=f"{settings.frontend_url}/?auth=rejected")
@@ -63,12 +59,11 @@ async def auth_callback(request: Request, code: str, state: str, db: AsyncSessio
     if email not in settings.allowed_emails_list:
         return RedirectResponse(url=f"{settings.frontend_url}/?auth=rejected")
 
-    stmt = select(User).where(User.google_sub == google_sub)
-    result = await db.execute(stmt)
-    user = result.scalars().first()
-
+    # Find or create user
+    user = db.get_user_by_google_sub(google_sub)
     if user is None:
         user = User(
+            id=str(uuid.uuid4()),
             google_sub=google_sub,
             email=email,
             display_name=name or email,
@@ -76,9 +71,7 @@ async def auth_callback(request: Request, code: str, state: str, db: AsyncSessio
             is_allowed=True,
             email_verified=True,
         )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        db.upsert_user(user)
     else:
         user.email = email
         user.display_name = name or email
@@ -86,41 +79,28 @@ async def auth_callback(request: Request, code: str, state: str, db: AsyncSessio
         user.is_allowed = True
         user.email_verified = True
         user.updated_at = datetime.now(timezone.utc)
-        await db.commit()
-        await db.refresh(user)
 
-    # Upsert tokens
-    stmt_token = select(OAuthToken).where(OAuthToken.user_id == user.id)
-    res_token = await db.execute(stmt_token)
-    token_row = res_token.scalars().first()
-
+    # Store tokens (encrypted)
     encrypted_access = crypto_service.encrypt(tokens["access_token"])
     encrypted_refresh = crypto_service.encrypt(tokens["refresh_token"]) if tokens.get("refresh_token") else None
     expiry = tokens.get("expiry")
 
-    if token_row is None:
-        token_row = OAuthToken(
-            user_id=user.id,
-            provider="google",
-            access_token=encrypted_access,
-            refresh_token=encrypted_refresh,
-            scope=" ".join(["openid", "email", "https://www.googleapis.com/auth/youtube.upload"]),
-            expiry=expiry,
-        )
-        db.add(token_row)
-    else:
-        token_row.access_token = encrypted_access
-        if encrypted_refresh:
-            token_row.refresh_token = encrypted_refresh
-        token_row.expiry = expiry
-        token_row.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+    token = OAuthToken(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        provider="google",
+        access_token=encrypted_access,
+        refresh_token=encrypted_refresh,
+        scope="openid email https://www.googleapis.com/auth/youtube.upload",
+        expiry=expiry,
+    )
+    db.upsert_token(token)
 
     # Create session
     session_id = str(uuid.uuid4())
     if not hasattr(request.app.state, "sessions"):
         request.app.state.sessions = {}
-    request.app.state.sessions[session_id] = str(user.id)
+    request.app.state.sessions[session_id] = user.id
 
     response = RedirectResponse(url=f"{settings.frontend_url}/?auth=success")
     response.set_cookie(
@@ -145,9 +125,18 @@ async def logout(request: Request):
     return response
 
 
-@router.get("/me", response_model=UserOut)
+@router.get("/me")
 async def me(request: Request):
     user = getattr(request.state, "current_user", None)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
-    return user
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "avatar_url": user.avatar_url,
+        "is_allowed": user.is_allowed,
+        "email_verified": user.email_verified,
+        "created_at": user.created_at.isoformat(),
+        "updated_at": user.updated_at.isoformat(),
+    }

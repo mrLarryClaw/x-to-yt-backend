@@ -55,7 +55,7 @@ async def auth_callback(request: Request, code: str = None, state: str = None, e
         pass
     
     try:
-        tokens = await exchange_code(code, state)
+        tokens = await exchange_code(code)
     except Exception as e:
         import logging
         logging.error(f"Token exchange failed: {type(e).__name__}: {e}")
@@ -166,7 +166,7 @@ async def auth_callback_post(request: Request, data: dict = None):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="missing_code")
     
     try:
-        tokens = await exchange_code(data["code"], None)
+        tokens = await exchange_code(data["code"])
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 

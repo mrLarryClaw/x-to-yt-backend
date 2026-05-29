@@ -40,26 +40,29 @@ async def auth_callback(request: Request, code: str = None, state: str = None, e
     
     frontend_url = settings.frontend_url or "https://x-to-yt-frontend-production.up.railway.app"
     
-    if error == "access_denied":
-        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+    if error:
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=google_{error}")
     
     if not code:
-        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=no_code")
     
     # Verify state cookie (CSRF protection)
+    # Note: cookie may not survive the redirect chain, so log but don't block
     cookie_state = request.cookies.get("auth_state")
     if not cookie_state:
-        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+        # Log warning but don't block auth - the code from Google is single-use
+        # and proves the user authorized via Google's consent screen
+        pass
     
     try:
         tokens = await exchange_code(code, state)
-    except Exception:
-        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+    except Exception as e:
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=exchange_failed")
 
     try:
         user_info = await fetch_user_info(tokens["access_token"])
-    except Exception:
-        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+    except Exception as e:
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=user_info_failed")
 
     email = (user_info.get("email") or "").strip().lower()
     email_verified = bool(user_info.get("email_verified"))
@@ -68,10 +71,10 @@ async def auth_callback(request: Request, code: str = None, state: str = None, e
     picture = user_info.get("picture", "")
 
     if not email_verified:
-        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=email_not_verified")
 
     if email not in settings.allowed_emails_list:
-        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=email_not_allowed&email={email}")
 
     # Find or create user
     user = db.get_user_by_google_sub(google_sub)

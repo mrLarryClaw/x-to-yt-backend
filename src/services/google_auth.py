@@ -1,8 +1,9 @@
 import asyncio
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlencode
 
 import httpx
-from google_auth_oauthlib.flow import Flow
+import requests as req_lib
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 
@@ -16,56 +17,52 @@ AUTH_SCOPES = [
 ]
 
 
-def get_client_config():
-    return {
-        "web": {
+def create_authorization_url(state: str) -> str:
+    """Build Google OAuth URL manually — no PKCE code_challenge
+    (we use client_secret for security, and PKCE breaks across redirects)."""
+    params = {
+        "client_id": settings.google_client_id,
+        "redirect_uri": settings.redirect_uri,
+        "response_type": "code",
+        "scope": " ".join(AUTH_SCOPES),
+        "access_type": "offline",
+        "include_granted_scopes": "true",
+        "prompt": "consent",
+        "state": state,
+    }
+    return f"https://accounts.google.com/o/oauth2/auth?{urlencode(params)}"
+
+
+def _sync_exchange_code(code: str):
+    """Exchange auth code for tokens via direct POST to Google's token endpoint.
+    No PKCE — just client_id + client_secret + redirect_uri."""
+    resp = req_lib.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": code,
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [settings.redirect_uri],
-        }
-    }
-
-
-def create_authorization_url(state: str) -> str:
-    flow = Flow.from_client_config(
-        get_client_config(),
-        scopes=AUTH_SCOPES,
-        redirect_uri=settings.redirect_uri,
+            "redirect_uri": settings.redirect_uri,
+            "grant_type": "authorization_code",
+        },
+        timeout=15,
     )
-    url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
-        state=state,
-    )
-    return url
-
-
-def _sync_exchange_code(code: str, state: str):
-    flow = Flow.from_client_config(
-        get_client_config(),
-        scopes=AUTH_SCOPES,
-        redirect_uri=settings.redirect_uri,
-        state=state,
-    )
-    flow.fetch_token(code=code)
-    creds = flow.credentials
-    expiry = creds.expiry
-    if expiry and expiry.tzinfo is None:
-        expiry = expiry.replace(tzinfo=timezone.utc)
+    resp.raise_for_status()
+    data = resp.json()
+    expiry = None
+    if data.get("expires_in"):
+        expiry = datetime.now(timezone.utc) + timedelta(seconds=int(data["expires_in"]))
     return {
-        "access_token": creds.token,
-        "refresh_token": creds.refresh_token,
+        "access_token": data["access_token"],
+        "refresh_token": data.get("refresh_token"),
         "expiry": expiry,
-        "id_token": creds.id_token,
+        "id_token": data.get("id_token"),
     }
 
 
-async def exchange_code(code: str, state: str):
+async def exchange_code(code: str):
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync_exchange_code, code, state)
+    return await loop.run_in_executor(None, _sync_exchange_code, code)
 
 
 async def fetch_user_info(access_token: str) -> dict:

@@ -116,18 +116,40 @@ async def auth_callback(request: Request, code: str = None, state: str = None, e
         request.app.state.sessions = {}
     request.app.state.sessions[session_id] = user.id
 
-    # Redirect to frontend with session cookie
-    response = RedirectResponse(url=f"{frontend_url}/?auth=success")
-    response.set_cookie(
-        key="session_id",
-        value=session_id,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        max_age=86400 * 7,
+    # Redirect to frontend with session_id in URL (cross-domain cookies don't work)
+    response = RedirectResponse(
+        url=f"{frontend_url}/?auth=success&session_id={session_id}&name={user.display_name}&email={user.email}"
     )
     response.delete_cookie("auth_state")
     return response
+
+
+@router.get("/session")
+async def get_session(request: Request, session_id: str = None):
+    """Verify a session_id and return user info."""
+    if not session_id:
+        # Also try header
+        session_id = request.headers.get("X-Session-Id")
+    if not session_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="no_session")
+    
+    sessions = getattr(request.app.state, "sessions", {})
+    user_id = sessions.get(session_id)
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_session")
+    
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user_not_found")
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "avatar_url": user.avatar_url,
+        "is_allowed": user.is_allowed,
+        "email_verified": user.email_verified,
+    }
 
 
 @router.post("/google/callback")

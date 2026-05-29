@@ -34,7 +34,15 @@ app.add_middleware(
 @app.middleware("http")
 async def session_middleware(request: Request, call_next):
     request.state.current_user = None
-    session_id = request.cookies.get("session_id")
+    # Check header first (cross-domain auth), then cookie
+    auth_header = request.headers.get("Authorization", "")
+    session_id = None
+    if auth_header.startswith("Bearer "):
+        session_id = auth_header[7:].strip()
+    if not session_id:
+        session_id = request.cookies.get("session_id")
+    if not session_id:
+        session_id = request.headers.get("X-Session-Id")
     if session_id and hasattr(request.app.state, "sessions"):
         user_id = request.app.state.sessions.get(session_id)
         if user_id:

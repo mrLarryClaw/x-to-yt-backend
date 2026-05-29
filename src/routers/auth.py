@@ -57,7 +57,9 @@ async def auth_callback(request: Request, code: str = None, state: str = None, e
     try:
         tokens = await exchange_code(code, state)
     except Exception as e:
-        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=exchange_failed")
+        import logging
+        logging.error(f"Token exchange failed: {type(e).__name__}: {e}")
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=exchange_failed&detail={str(e)[:200]}")
 
     try:
         user_info = await fetch_user_info(tokens["access_token"])

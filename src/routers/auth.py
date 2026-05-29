@@ -18,8 +18,10 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.get("/google/start")
 async def auth_start(request: Request):
+    """Initiate Google OAuth flow. Redirects user to Google consent screen."""
     state = str(uuid.uuid4())
-    response = RedirectResponse(url=create_authorization_url(state))
+    auth_url = create_authorization_url(state)
+    response = RedirectResponse(url=auth_url)
     response.set_cookie(
         key="auth_state",
         value=state,
@@ -32,20 +34,32 @@ async def auth_start(request: Request):
 
 
 @router.get("/google/callback")
-async def auth_callback(request: Request, code: str, state: str):
+async def auth_callback(request: Request, code: str = None, state: str = None, error: str = None):
+    """Handle Google OAuth callback. Exchanges code for tokens, creates session,
+    and redirects to frontend with session cookie."""
+    
+    frontend_url = settings.frontend_url or "https://x-to-yt-frontend-production.up.railway.app"
+    
+    if error == "access_denied":
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+    
+    if not code:
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+    
+    # Verify state cookie (CSRF protection)
     cookie_state = request.cookies.get("auth_state")
-    if not cookie_state or cookie_state != state:
-        return RedirectResponse(url=f"{settings.frontend_url}/?auth=rejected")
-
+    if not cookie_state:
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
+    
     try:
         tokens = await exchange_code(code, state)
     except Exception:
-        return RedirectResponse(url=f"{settings.frontend_url}/?auth=rejected")
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
 
     try:
         user_info = await fetch_user_info(tokens["access_token"])
     except Exception:
-        return RedirectResponse(url=f"{settings.frontend_url}/?auth=rejected")
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
 
     email = (user_info.get("email") or "").strip().lower()
     email_verified = bool(user_info.get("email_verified"))
@@ -54,10 +68,10 @@ async def auth_callback(request: Request, code: str, state: str):
     picture = user_info.get("picture", "")
 
     if not email_verified:
-        return RedirectResponse(url=f"{settings.frontend_url}/?auth=rejected")
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
 
     if email not in settings.allowed_emails_list:
-        return RedirectResponse(url=f"{settings.frontend_url}/?auth=rejected")
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected")
 
     # Find or create user
     user = db.get_user_by_google_sub(google_sub)
@@ -102,7 +116,8 @@ async def auth_callback(request: Request, code: str, state: str):
         request.app.state.sessions = {}
     request.app.state.sessions[session_id] = user.id
 
-    response = RedirectResponse(url=f"{settings.frontend_url}/?auth=success")
+    # Redirect to frontend with session cookie
+    response = RedirectResponse(url=f"{frontend_url}/?auth=success")
     response.set_cookie(
         key="session_id",
         value=session_id,
@@ -113,6 +128,69 @@ async def auth_callback(request: Request, code: str, state: str):
     )
     response.delete_cookie("auth_state")
     return response
+
+
+@router.post("/google/callback")
+async def auth_callback_post(request: Request, data: dict = None):
+    """API endpoint for frontend to exchange code for session. 
+    Alternative to GET callback for API-based auth flows."""
+    
+    if not data or not data.get("code"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="missing_code")
+    
+    try:
+        tokens = await exchange_code(data["code"], None)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+
+    try:
+        user_info = await fetch_user_info(tokens["access_token"])
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user_info_failed")
+
+    email = (user_info.get("email") or "").strip().lower()
+    email_verified = bool(user_info.get("email_verified"))
+    google_sub = user_info.get("sub", "")
+
+    if not email_verified:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="email_not_verified")
+
+    if email not in settings.allowed_emails_list:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_allowed")
+
+    user = db.get_user_by_google_sub(google_sub)
+    if user is None:
+        user = User(
+            id=str(uuid.uuid4()),
+            google_sub=google_sub,
+            email=email,
+            display_name=user_info.get("name", email),
+            avatar_url=user_info.get("picture"),
+            is_allowed=True,
+            email_verified=True,
+        )
+        db.upsert_user(user)
+
+    encrypted_access = crypto_service.encrypt(tokens["access_token"])
+    encrypted_refresh = crypto_service.encrypt(tokens["refresh_token"]) if tokens.get("refresh_token") else None
+
+    token = OAuthToken(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        provider="google",
+        access_token=encrypted_access,
+        refresh_token=encrypted_refresh,
+        scope="openid email https://www.googleapis.com/auth/youtube.upload",
+        expiry=tokens.get("expiry"),
+    )
+    db.upsert_token(token)
+
+    session_id = str(uuid.uuid4())
+    if not hasattr(request.app.state, "sessions"):
+        request.app.state.sessions = {}
+    request.app.state.sessions[session_id] = user.id
+
+    return {"session_id": session_id, "user": {"id": user.id, "email": user.email, "display_name": user.display_name}}
 
 
 @router.post("/logout")

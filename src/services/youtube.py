@@ -1,38 +1,13 @@
 import os
 import json
 import requests
+import logging
 from typing import Optional, Callable
 
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
 
-YOUTUBE_API_SERVICE_NAME = "youtube"
-YOUTUBE_API_VERSION = "v3"
-
-
-def get_youtube_service(access_token: str, refresh_token: str = None, client_id: str = None, client_secret: str = None):
-    """Build YouTube service using google-auth + requests (avoids httplib2 redirect bug)."""
-    creds = Credentials(
-        token=access_token,
-        refresh_token=refresh_token,
-        client_id=client_id,
-        client_secret=client_secret,
-        token_uri="https://oauth2.googleapis.com/token",
-    )
-    # Refresh token if expired before building the service
-    if creds.expired and refresh_token and client_id:
-        creds.refresh(GoogleAuthRequest())
-
-    # Use google-auth requests adapter instead of httplib2 (avoids "Redirected but missing Location" bug)
-    from google_auth_httplib2 import AuthorizedHttp
-    import httplib2
-    http = AuthorizedHttp(creds, http=httplib2.Http(
-        timeout=300,
-        disable_ssl_certificate_validation=False,
-    ))
-    return build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, http=http, static_discovery=False)
+logger = logging.getLogger("youtube")
 
 
 def upload_video_resumable(

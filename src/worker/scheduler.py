@@ -51,7 +51,6 @@ async def worker_tick():
     if not job:
         return
     log.info("Found queued job")
-    job = queued[0]
 
     job.status = "downloading"
     job.started_at = datetime.now(timezone.utc)

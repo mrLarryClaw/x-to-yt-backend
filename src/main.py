@@ -1,4 +1,3 @@
-import uuid
 import logging
 from contextlib import asynccontextmanager
 
@@ -8,7 +7,6 @@ from fastapi.responses import JSONResponse
 
 from src.config import settings
 from src.database import db
-from src.routers import auth, jobs
 from src.worker.scheduler import start_scheduler, shutdown_scheduler
 
 # Ensure all loggers propagate to root so Railway captures output
@@ -18,8 +16,6 @@ logging.getLogger("worker").setLevel(logging.DEBUG)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not hasattr(app.state, "sessions"):
-        app.state.sessions = {}
     logging.info("Starting worker scheduler...")
     start_scheduler()
     logging.info("Worker scheduler started (30s tick interval)")
@@ -50,14 +46,12 @@ async def session_middleware(request: Request, call_next):
         session_id = request.cookies.get("session_id")
     if not session_id:
         session_id = request.headers.get("X-Session-Id")
-    if session_id and hasattr(request.app.state, "sessions"):
-        user_id = request.app.state.sessions.get(session_id)
+    if session_id:
+        user_id = db.get_session_user_id(session_id)
         if user_id:
             user = db.get_user_by_id(user_id)
             if user:
                 request.state.current_user = user
-            else:
-                request.app.state.sessions.pop(session_id, None)
     response = await call_next(request)
     return response
 

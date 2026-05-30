@@ -45,14 +45,12 @@ def start_scheduler():
 
 
 async def worker_tick():
-    log.info(f"Worker tick: checking for queued jobs...")
-    # Find oldest queued job
-    all_jobs = list(db._jobs.values())
-    queued = [j for j in all_jobs if j.status == "queued"]
-    if not queued:
+    log.info("Worker tick: checking for queued jobs...")
+    # Find oldest queued job via PostgreSQL
+    job = db.get_next_queued_job()
+    if not job:
         return
-    log.info(f"Found {len(queued)} queued job(s)")
-    queued.sort(key=lambda j: j.created_at)
+    log.info("Found queued job")
     job = queued[0]
 
     job.status = "downloading"

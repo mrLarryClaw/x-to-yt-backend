@@ -12,3 +12,4 @@ aiohttp
 httpx
 apscheduler
 yt-dlp
+psycopg2-binary

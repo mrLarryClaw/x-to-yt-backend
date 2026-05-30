@@ -1,5 +1,6 @@
 import os
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -7,6 +8,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from src.database import db, Job
 from src.services.google_auth import refresh_if_needed
 from src.services.youtube import upload_video
+
+log = logging.getLogger("worker")
+log.setLevel(logging.DEBUG)
 
 DOWNLOAD_DIR = "/tmp/x_to_yt_downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -34,6 +38,7 @@ async def worker_tick():
     job.started_at = datetime.now(timezone.utc)
     job.progress_stage = "downloading"
     db.update_job(job)
+    log.info(f"Processing job {job.id}: downloading {job.canonical_url}")
 
     temp_path = os.path.join(DOWNLOAD_DIR, f"{job.id}.mp4")
 
@@ -50,7 +55,9 @@ async def worker_tick():
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
         if proc.returncode != 0:
-            raise RuntimeError(stderr.decode("utf-8", errors="replace")[:500])
+            err_text = stderr.decode("utf-8", errors="replace")[:500]
+            log.error(f"yt-dlp failed for job {job.id}: {err_text}")
+            raise RuntimeError(err_text)
 
         actual_path = temp_path
         if not os.path.exists(actual_path):
@@ -61,6 +68,7 @@ async def worker_tick():
                     break
 
         if not os.path.exists(actual_path):
+            log.error(f"yt-dlp did not produce an output file for job {job.id}")
             raise RuntimeError("yt-dlp did not produce an output file")
 
         job.status = "uploading"
@@ -68,6 +76,7 @@ async def worker_tick():
         job.progress_stage = "uploading"
         db.update_job(job)
     except Exception as exc:
+        log.error(f"Download failed for job {job.id}: {exc}")
         job.status = "failed"
         job.error_code = "download_failed"
         job.error_message = str(exc)[:500]
@@ -79,9 +88,11 @@ async def worker_tick():
     try:
         token = db.get_token_by_user(job.user_id)
         if not token:
+            log.error(f"No YouTube tokens found for user {job.user_id} in job {job.id}")
             raise RuntimeError("No YouTube tokens found for user")
 
         access_token = await refresh_if_needed(token)
+        log.info(f"Uploading job {job.id} to YouTube")
 
         video_id = await asyncio.get_event_loop().run_in_executor(
             None,
@@ -110,6 +121,7 @@ async def worker_tick():
         except Exception:
             pass
     except Exception as exc:
+        log.error(f"Upload failed for job {job.id}: {exc}")
         job.status = "failed"
         job.error_code = "upload_failed"
         job.error_message = str(exc)[:500]

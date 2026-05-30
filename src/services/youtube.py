@@ -164,8 +164,8 @@ def delete_youtube_video(
         client_secret=client_secret,
         token_uri="https://oauth2.googleapis.com/token",
     )
-    if creds.expired and refresh_token:
-        creds.refresh(GoogleAuthRequest())
+    # Always refresh — access tokens expire fast, and Credentials.expired is unreliable
+    creds.refresh(GoogleAuthRequest())
 
     url = f"https://www.googleapis.com/youtube/v3/videos?id={video_id}"
     headers = {"Authorization": f"Bearer {creds.token}"}

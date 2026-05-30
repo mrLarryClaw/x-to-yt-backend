@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from src.config import settings
 from src.database import db
 from src.worker.scheduler import start_scheduler, shutdown_scheduler
+from src.routers import auth, jobs
 
 # Ensure all loggers propagate to root so Railway captures output
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

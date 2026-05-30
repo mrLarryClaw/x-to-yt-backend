@@ -6,7 +6,6 @@ from fastapi import APIRouter, HTTPException, status, Request
 from src.database import db, Job
 from src.utils.url_validator import normalize_url, is_valid_status_url
 from src.services.youtube import delete_youtube_video
-from src.services.crypto import crypto_service
 from src.config import settings
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -108,13 +107,13 @@ async def delete_youtube(job_id: str, request: Request):
     if not token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_youtube_token")
 
-    access_token = crypto_service.decrypt(token.access_token_enc)
-    refresh_token = crypto_service.decrypt(token.refresh_token_enc) if token.refresh_token_enc else None
+    access_token = token.access_token
+    refresh_token = token.refresh_token or ""
 
     try:
         delete_youtube_video(
             access_token=access_token,
-            refresh_token=refresh_token or "",
+            refresh_token=refresh_token,
             client_id=settings.google_client_id,
             client_secret=settings.google_client_secret,
             video_id=job.youtube_video_id,

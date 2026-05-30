@@ -36,6 +36,9 @@ def create_authorization_url(state: str) -> str:
 def _sync_exchange_code(code: str):
     """Exchange auth code for tokens via direct POST to Google's token endpoint.
     No PKCE — just client_id + client_secret + redirect_uri."""
+    import logging
+    logger = logging.getLogger("auth")
+    logger.info(f"Exchanging auth code with redirect_uri={settings.redirect_uri}")
     resp = req_lib.post(
         "https://oauth2.googleapis.com/token",
         data={
@@ -47,7 +50,9 @@ def _sync_exchange_code(code: str):
         },
         timeout=15,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        logger.error(f"Token exchange failed: {resp.status_code} {resp.text[:500]}")
+        resp.raise_for_status()
     data = resp.json()
     expiry = None
     if data.get("expires_in"):

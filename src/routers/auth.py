@@ -34,7 +34,7 @@ async def auth_start(request: Request):
 
 
 @router.get("/google/callback")
-async def auth_callback(request: Request, code: str = None, state: str = None, error: str = None):
+async def auth_callback(request: Request, code: str = None, state: str = None, error: str = None, iss: str = None):
     """Handle Google OAuth callback. Exchanges code for tokens, creates session,
     and redirects to frontend with session_id in URL params."""
     
@@ -51,7 +51,10 @@ async def auth_callback(request: Request, code: str = None, state: str = None, e
     except Exception as e:
         import logging
         logging.error(f"Token exchange failed: {type(e).__name__}: {e}")
-        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=exchange_failed&detail={str(e)[:200]}")
+        # URL-encode the error detail for safe redirect
+        from urllib.parse import quote
+        detail = quote(str(e)[:200])
+        return RedirectResponse(url=f"{frontend_url}/?auth=rejected&reason=exchange_failed&detail={detail}")
 
     try:
         user_info = await fetch_user_info(tokens["access_token"])

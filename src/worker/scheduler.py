@@ -26,11 +26,13 @@ def start_scheduler():
 
 
 async def worker_tick():
+    log.info(f"Worker tick: checking for queued jobs...")
     # Find oldest queued job
     all_jobs = list(db._jobs.values())
     queued = [j for j in all_jobs if j.status == "queued"]
     if not queued:
         return
+    log.info(f"Found {len(queued)} queued job(s)")
     queued.sort(key=lambda j: j.created_at)
     job = queued[0]
 
@@ -39,6 +41,7 @@ async def worker_tick():
     job.progress_stage = "downloading"
     db.update_job(job)
     log.info(f"Processing job {job.id}: downloading {job.canonical_url}")
+    print(f"WORKER: downloading job={job.id} url={job.canonical_url}", flush=True)
 
     temp_path = os.path.join(DOWNLOAD_DIR, f"{job.id}.mp4")
 
@@ -75,8 +78,10 @@ async def worker_tick():
         job.download_path = actual_path
         job.progress_stage = "uploading"
         db.update_job(job)
+        print(f"WORKER: download complete job={job.id} file={actual_path}", flush=True)
     except Exception as exc:
         log.error(f"Download failed for job {job.id}: {exc}")
+        print(f"DOWNLOAD FAILED job={job.id} error={exc}", flush=True)
         job.status = "failed"
         job.error_code = "download_failed"
         job.error_message = str(exc)[:500]
@@ -93,6 +98,7 @@ async def worker_tick():
 
         access_token = await refresh_if_needed(token)
         log.info(f"Uploading job {job.id} to YouTube")
+        print(f"WORKER: uploading job={job.id} to YouTube", flush=True)
 
         video_id = await asyncio.get_event_loop().run_in_executor(
             None,
@@ -113,6 +119,7 @@ async def worker_tick():
         job.completed_at = datetime.now(timezone.utc)
         job.updated_at = datetime.now(timezone.utc)
         db.update_job(job)
+        print(f"WORKER: upload complete job={job.id} video_id={video_id}", flush=True)
 
         # cleanup temp file
         try:
@@ -122,6 +129,7 @@ async def worker_tick():
             pass
     except Exception as exc:
         log.error(f"Upload failed for job {job.id}: {exc}")
+        print(f"UPLOAD FAILED job={job.id} error={exc}", flush=True)
         job.status = "failed"
         job.error_code = "upload_failed"
         job.error_message = str(exc)[:500]

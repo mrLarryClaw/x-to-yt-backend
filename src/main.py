@@ -1,4 +1,5 @@
 import uuid
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,12 +11,18 @@ from src.database import db
 from src.routers import auth, jobs
 from src.worker.scheduler import start_scheduler, shutdown_scheduler
 
+# Ensure all loggers propagate to root so Railway captures output
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger("worker").setLevel(logging.DEBUG)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if not hasattr(app.state, "sessions"):
         app.state.sessions = {}
+    logging.info("Starting worker scheduler...")
     start_scheduler()
+    logging.info("Worker scheduler started (30s tick interval)")
     yield
     shutdown_scheduler()
 

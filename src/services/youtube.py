@@ -1,27 +1,150 @@
 import os
-from pathlib import Path
+import json
+import requests
 from typing import Optional, Callable
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google_auth_httplib2 import AuthorizedHttp
-import httplib2
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleAuthRequest
 
 YOUTUBE_API_SERVICE_NAME = "youtube"
 YOUTUBE_API_VERSION = "v3"
 
 
-def get_youtube_service(access_token: str, refresh_token: str = None, client_id: str = None, client_secret: str = None, token_uri: str = "https://oauth2.googleapis.com/token"):
+def get_youtube_service(access_token: str, refresh_token: str = None, client_id: str = None, client_secret: str = None):
+    """Build YouTube service using google-auth + requests (avoids httplib2 redirect bug)."""
     creds = Credentials(
         token=access_token,
         refresh_token=refresh_token,
         client_id=client_id,
         client_secret=client_secret,
-        token_uri=token_uri,
+        token_uri="https://oauth2.googleapis.com/token",
     )
-    http = AuthorizedHttp(creds, http=httplib2.Http(timeout=300))
+    # Refresh token if expired before building the service
+    if creds.expired and refresh_token and client_id:
+        creds.refresh(GoogleAuthRequest())
+
+    # Use google-auth requests adapter instead of httplib2 (avoids "Redirected but missing Location" bug)
+    from google_auth_httplib2 import AuthorizedHttp
+    import httplib2
+    http = AuthorizedHttp(creds, http=httplib2.Http(
+        timeout=300,
+        disable_ssl_certificate_validation=False,
+    ))
     return build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, http=http, static_discovery=False)
+
+
+def upload_video_resumable(
+    access_token: str,
+    refresh_token: str,
+    client_id: str,
+    client_secret: str,
+    file_path: str,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    privacy_status: str = "private",
+) -> str:
+    """Upload video to YouTube using direct resumable upload via requests.
+    Avoids httplib2 entirely to prevent the 'Redirected but missing Location' bug."""
+    
+    # Build credentials and refresh if needed
+    creds = Credentials(
+        token=access_token,
+        refresh_token=refresh_token,
+        client_id=client_id,
+        client_secret=client_secret,
+        token_uri="https://oauth2.googleapis.com/token",
+    )
+    if creds.expired and refresh_token:
+        creds.refresh(GoogleAuthRequest())
+    
+    token = creds.token
+    
+    # Step 1: Initiate resumable upload
+    metadata = {
+        "snippet": {
+            "title": title or "Uploaded from X",
+            "description": description or "",
+            "categoryId": "22",
+        },
+        "status": {
+            "privacyStatus": privacy_status,
+            "selfDeclaredMadeForKids": False,
+        },
+    }
+    
+    initiate_url = (
+        "https://www.googleapis.com/upload/youtube/v3/videos"
+        "?uploadType=resumable"
+        "&part=snippet,status"
+    )
+    
+    file_size = os.path.getsize(file_path)
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Upload-Content-Type": "video/mp4",
+        "X-Upload-Content-Length": str(file_size),
+    }
+    
+    resp = requests.post(initiate_url, headers=headers, json=metadata, timeout=60)
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"YouTube upload initiation failed: {resp.status_code} {resp.text[:500]}")
+    
+    upload_url = resp.headers.get("Location")
+    if not upload_url:
+        raise RuntimeError(f"YouTube upload initiation succeeded but no Location header: {resp.headers}")
+    
+    # Step 2: Upload the file in chunks
+    chunk_size = 5 * 1024 * 1024  # 5 MB
+    import logging
+    logger = logging.getLogger("youtube")
+    
+    with open(file_path, "rb") as f:
+        offset = 0
+        while offset < file_size:
+            f.seek(offset)
+            chunk = f.read(chunk_size)
+            chunk_len = len(chunk)
+            end = min(offset + chunk_len, file_size) - 1
+            
+            put_headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "video/mp4",
+                "Content-Range": f"bytes {offset}-{end}/{file_size}",
+            }
+            
+            put_resp = requests.put(upload_url, headers=put_headers, data=chunk, timeout=300)
+            
+            if put_resp.status_code == 200 or put_resp.status_code == 201:
+                # Upload complete
+                result = put_resp.json()
+                video_id = result.get("id")
+                if not video_id:
+                    raise RuntimeError(f"YouTube upload response missing video id: {put_resp.text[:200]}")
+                logger.info(f"YouTube upload complete: video_id={video_id}")
+                return video_id
+            elif put_resp.status_code == 308:
+                # Resume incomplete — get the last byte received
+                range_header = put_resp.headers.get("Range", "")
+                if range_header:
+                    # Range: bytes=0-LAST_BYTE
+                    last_byte = int(range_header.split("-")[1])
+                    offset = last_byte + 1
+                    logger.info(f"Upload progress: {offset}/{file_size} bytes ({offset*100//file_size}%)")
+                else:
+                    # No range header, retry from current offset
+                    offset += chunk_len
+            elif put_resp.status_code >= 500:
+                # Server error, retry from current position
+                logger.warning(f"YouTube upload server error {put_resp.status_code}, retrying from offset {offset}")
+                continue
+            else:
+                raise RuntimeError(f"YouTube upload chunk failed: {put_resp.status_code} {put_resp.text[:500]}")
+    
+    raise RuntimeError("YouTube upload: unexpected end of upload loop")
 
 
 def upload_video(
@@ -35,45 +158,17 @@ def upload_video(
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
 ) -> str:
-    youtube = get_youtube_service(
-        access_token_decrypted,
+    """Upload video to YouTube. Uses direct resumable upload to avoid httplib2 bugs."""
+    if not refresh_token or not client_id or not client_secret:
+        raise RuntimeError("YouTube upload requires refresh_token, client_id, and client_secret")
+    
+    return upload_video_resumable(
+        access_token=access_token_decrypted,
         refresh_token=refresh_token,
         client_id=client_id,
         client_secret=client_secret,
+        file_path=file_path,
+        title=title,
+        description=description,
+        privacy_status=privacy_status,
     )
-
-    body = {
-        "snippet": {
-            "title": title or "Uploaded from X",
-            "description": description or "",
-            "categoryId": "22",  # People & Blogs
-        },
-        "status": {
-            "privacyStatus": privacy_status,
-            "selfDeclaredMadeForKids": False,
-        },
-    }
-
-    media = MediaFileUpload(
-        file_path,
-        chunksize=1024 * 1024 * 5,  # 5 MB chunks
-        mimetype="video/mp4",
-        resumable=True,
-    )
-
-    request = youtube.videos().insert(
-        part=",".join(body.keys()),
-        body=body,
-        media_body=media,
-    )
-
-    response = None
-    while response is None:
-        status, response = request.next_chunk(num_retries=3)
-        if status and progress_callback:
-            progress_callback(int(status.progress() * 100))
-
-    video_id = response.get("id")
-    if not video_id:
-        raise RuntimeError("YouTube upload response missing video id")
-    return video_id

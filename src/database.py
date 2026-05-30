@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
     id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id),
+    user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
     provider TEXT DEFAULT 'google',
     access_token TEXT NOT NULL,
     refresh_token TEXT,

@@ -8,6 +8,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from src.database import db, Job
 from src.services.google_auth import refresh_if_needed
 from src.services.youtube import upload_video
+from src.services.crypto import crypto_service
+from src.config import settings
 
 log = logging.getLogger("worker")
 log.setLevel(logging.DEBUG)
@@ -126,6 +128,9 @@ async def worker_tick():
         log.info(f"Uploading job {job.id} to YouTube")
         print(f"WORKER: uploading job={job.id} to YouTube", flush=True)
 
+        # Get decrypted refresh token for YouTube client auto-refresh
+        decrypted_refresh = crypto_service.decrypt(token.refresh_token) if token.refresh_token else None
+
         video_id = await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: upload_video(
@@ -134,6 +139,9 @@ async def worker_tick():
                 title=job.source_title or None,
                 description="Uploaded from X via x-to-yt",
                 privacy_status="private",
+                refresh_token=decrypted_refresh,
+                client_id=settings.google_client_id,
+                client_secret=settings.google_client_secret,
             ),
         )
 

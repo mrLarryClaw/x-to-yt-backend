@@ -12,8 +12,14 @@ YOUTUBE_API_SERVICE_NAME = "youtube"
 YOUTUBE_API_VERSION = "v3"
 
 
-def get_youtube_service(access_token: str):
-    creds = Credentials(access_token)
+def get_youtube_service(access_token: str, refresh_token: str = None, client_id: str = None, client_secret: str = None, token_uri: str = "https://oauth2.googleapis.com/token"):
+    creds = Credentials(
+        token=access_token,
+        refresh_token=refresh_token,
+        client_id=client_id,
+        client_secret=client_secret,
+        token_uri=token_uri,
+    )
     http = AuthorizedHttp(creds, http=httplib2.Http(timeout=300))
     return build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, http=http, static_discovery=False)
 
@@ -25,8 +31,16 @@ def upload_video(
     description: Optional[str] = None,
     privacy_status: str = "private",
     progress_callback: Optional[Callable[[int], None]] = None,
+    refresh_token: Optional[str] = None,
+    client_id: Optional[str] = None,
+    client_secret: Optional[str] = None,
 ) -> str:
-    youtube = get_youtube_service(access_token_decrypted)
+    youtube = get_youtube_service(
+        access_token_decrypted,
+        refresh_token=refresh_token,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
 
     body = {
         "snippet": {

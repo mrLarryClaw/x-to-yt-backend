@@ -13,7 +13,26 @@ log = logging.getLogger("worker")
 log.setLevel(logging.DEBUG)
 
 DOWNLOAD_DIR = "/tmp/x_to_yt_downloads"
+COOKIES_PATH = "/tmp/x_cookies.txt"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+
+def _write_cookies_file():
+    """Write X/Twitter cookies from env var to file for yt-dlp."""
+    cookie_text = os.environ.get("X_COOKIES", "").strip()
+    if not cookie_text:
+        return None
+    # Support both raw Netscape cookie text and base64-encoded
+    import base64
+    try:
+        decoded = base64.b64decode(cookie_text).decode("utf-8", errors="replace")
+        if "#HttpOnly_" in decoded or ".twitter.com" in decoded or ".x.com" in decoded:
+            cookie_text = decoded
+    except Exception:
+        pass  # Not base64, treat as raw text
+    with open(COOKIES_PATH, "w") as f:
+        f.write(cookie_text)
+    return COOKIES_PATH
 
 scheduler = None
 
@@ -47,12 +66,22 @@ async def worker_tick():
 
     # ── Download ──
     try:
-        proc = await asyncio.create_subprocess_exec(
+        ytdlp_args = [
             "yt-dlp",
             "--no-playlist",
             "-f", "best[ext=mp4]/best",
             "-o", temp_path,
-            job.canonical_url,
+        ]
+        cookies_path = _write_cookies_file()
+        if cookies_path and os.path.exists(cookies_path):
+            ytdlp_args.extend(["--cookies", cookies_path])
+            print(f"WORKER: using X cookies for job={job.id}", flush=True)
+        else:
+            print(f"WORKER: WARNING - no X cookies configured, download may fail", flush=True)
+        ytdlp_args.append(job.canonical_url)
+
+        proc = await asyncio.create_subprocess_exec(
+            *ytdlp_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

@@ -147,3 +147,33 @@ def upload_video(
         description=description,
         privacy_status=privacy_status,
     )
+
+
+def delete_youtube_video(
+    access_token: str,
+    refresh_token: str,
+    client_id: str,
+    client_secret: str,
+    video_id: str,
+) -> bool:
+    """Delete a video from YouTube using the Data API v3."""
+    creds = Credentials(
+        token=access_token,
+        refresh_token=refresh_token,
+        client_id=client_id,
+        client_secret=client_secret,
+        token_uri="https://oauth2.googleapis.com/token",
+    )
+    if creds.expired and refresh_token:
+        creds.refresh(GoogleAuthRequest())
+
+    url = f"https://www.googleapis.com/youtube/v3/videos?id={video_id}"
+    headers = {"Authorization": f"Bearer {creds.token}"}
+    resp = requests.delete(url, headers=headers, timeout=30)
+
+    if resp.status_code == 204 or resp.status_code == 200:
+        logger.info(f"YouTube video {video_id} deleted successfully")
+        return True
+    else:
+        logger.error(f"YouTube delete failed: {resp.status_code} {resp.text[:500]}")
+        raise RuntimeError(f"YouTube delete failed: {resp.status_code} {resp.text[:200]}")
